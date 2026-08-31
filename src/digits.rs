@@ -152,6 +152,63 @@ mod tests {
         );
     }
 
+    /// Expected art in the table's own notation: `#` is a lit pixel, and every
+    /// other mark is dark. The notation keeps a dark pixel visible, so no
+    /// expected line ends in trailing spaces that an editor could strip.
+    fn art(rows: [&str; HEIGHT]) -> Vec<String> {
+        rows.iter()
+            .map(|row| {
+                row.chars()
+                    .map(|mark| if mark == LIT { ON } else { OFF })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The test above pins digit 0 in real block characters. This one pins the
+    /// shape of the other nine, because the checks either side of it measure
+    /// only width, line count, and which characters appear. Without this test,
+    /// swapping the 6 and the 9 in the table renders a wrong clock and every
+    /// other test still passes.
+    #[test]
+    fn render_time_draws_every_other_digit_as_the_expected_glyph() {
+        assert_eq!(
+            render_time(754),
+            art([
+                "..#.###...###.#.#",
+                "..#...#.#...#.#.#",
+                "..#.###...###.###",
+                "..#.#...#...#...#",
+                "..#.###...###...#",
+            ]),
+            "754 seconds must read 12:34"
+        );
+
+        assert_eq!(
+            render_time(3367),
+            art([
+                "###.###...###.###",
+                "#...#...#.#.#...#",
+                "###.###...#.#...#",
+                "..#.#.#.#.#.#...#",
+                "###.###...###...#",
+            ]),
+            "3367 seconds must read 56:07"
+        );
+
+        assert_eq!(
+            render_time(5345),
+            art([
+                "###.###...###.###",
+                "#.#.#.#.#.#.#.#..",
+                "###.###...#.#.###",
+                "#.#...#.#.#.#...#",
+                "###.###...###.###",
+            ]),
+            "5345 seconds must read 89:05"
+        );
+    }
+
     #[test]
     fn render_time_uses_three_minute_digits_from_one_hundred_minutes() {
         let two_digits = render_time(5999); // 99:59

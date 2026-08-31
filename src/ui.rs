@@ -483,6 +483,39 @@ mod tests {
         );
     }
 
+    /// The exact size at which the large clock starts to fit. The two tests
+    /// above sit far from this boundary: 44x16 gives the clock a 42x11 area
+    /// against a 17x5 glyph block, and 30x8 gives it 28x3, so neither bound in
+    /// `fits` is ever at its limit. Without this test, turning either `<=` in
+    /// `fits` into `<` passes the whole suite.
+    #[test]
+    fn nineteen_by_ten_is_the_smallest_large_clock() {
+        let view = focus_view();
+        let glyphs = digits::render_time(1500);
+        let top_row = glyphs[0].trim_end();
+
+        // 19x10 leaves the clock exactly 17x5, which the block fills.
+        let out = screen(19, 10, &view);
+        assert!(
+            out.contains(top_row),
+            "the large clock must draw at 19x10:\n{out}"
+        );
+
+        // One column narrower fails the width bound, and one row shorter fails
+        // the height bound. Each must fall back on its own.
+        for (width, height) in [(18, 10), (19, 9)] {
+            let out = screen(width, height, &view);
+            assert!(
+                !out.contains(top_row),
+                "the large clock must not draw at {width}x{height}:\n{out}"
+            );
+            assert!(
+                out.contains("25:00"),
+                "the plain clock must draw at {width}x{height}:\n{out}"
+            );
+        }
+    }
+
     #[test]
     fn a_12x4_render_does_not_panic() {
         let out = screen(12, 4, &focus_view());
