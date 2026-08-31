@@ -1,0 +1,5 @@
+# Build output
+/target
+
+# Design specs stay local
+docs/superpowers/
