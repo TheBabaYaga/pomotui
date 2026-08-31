@@ -16,16 +16,28 @@ use crate::digits;
 /// Every colour that carries meaning names its own value. An indexed colour is
 /// only a request, and the terminal THEME decides what it looks like:
 /// `Color::Red` is ANSI index 1, and Catppuccin Mocha paints it #fe428a. So a
-/// phase colour can never be indexed, or the theme repaints the meaning.
+/// phase colour can never be indexed, or the theme repaints the meaning. That
+/// applies to the focus red especially: `Color::Red` is the colour it looks
+/// like, and it is exactly the one a theme gets to redefine.
 ///
-/// Focus accent, #FF4696.
-const FOCUS: Color = Color::Rgb(255, 70, 150);
-/// Focus background, #1E1033.
-const FOCUS_BG: Color = Color::Rgb(30, 16, 51);
-/// Break accent, #B6FF2E.
-const BREAK: Color = Color::Rgb(182, 255, 46);
-/// Break background, #23262F.
-const BREAK_BG: Color = Color::Rgb(35, 38, 47);
+/// Each background carries the HUE of its own accent at 10% lightness and 40%
+/// saturation. Both use the same lightness and saturation, so the two phases
+/// read as one system and only the hue changes.
+///
+/// Every pairing that reaches the screen clears WCAG AA. The two accents are
+/// not equally strong against their background, and they cannot be: red
+/// carries far less perceived luminance than green, so focus measures 4.8:1
+/// where a break measures 8.4:1. Lightening the focus background would only
+/// lower it further.
+///
+/// Focus accent, #F0443E.
+const FOCUS: Color = Color::Rgb(240, 68, 62);
+/// Focus background, #24100F.
+const FOCUS_BG: Color = Color::Rgb(36, 16, 15);
+/// Break accent, #6FD05A.
+const BREAK: Color = Color::Rgb(111, 208, 90);
+/// Break background, #13240F.
+const BREAK_BG: Color = Color::Rgb(19, 36, 15);
 
 /// Quiet chrome: the border, the help row, and the debug row.
 ///
@@ -772,15 +784,17 @@ mod tests {
 
     #[test]
     fn the_palette_pins_its_values_and_no_theme_can_repaint_them() {
-        // The exact palette. These four values are the design, so a test that
-        // only described their hue would let a wrong value through. An earlier
-        // version of this test asserted that FOCUS did NOT read as pink. The
-        // palette chose pink on purpose, so that rule is gone and the values
-        // are pinned instead.
-        assert_eq!(FOCUS, Color::Rgb(255, 70, 150), "focus accent #FF4696");
-        assert_eq!(FOCUS_BG, Color::Rgb(30, 16, 51), "focus background #1E1033");
-        assert_eq!(BREAK, Color::Rgb(182, 255, 46), "break accent #B6FF2E");
-        assert_eq!(BREAK_BG, Color::Rgb(35, 38, 47), "break background #23262F");
+        // The exact palette. These four values ARE the design, so a test that
+        // only described their hue would let a wrong value through.
+        //
+        // An earlier version of this test described the hue instead: it
+        // required the focus colour to read as red and not pink. The palette
+        // has since been pink and then red again, and the rule had to go both
+        // times. Pinning the values states the design once and survives it.
+        assert_eq!(FOCUS, Color::Rgb(240, 68, 62), "focus accent #F0443E");
+        assert_eq!(FOCUS_BG, Color::Rgb(36, 16, 15), "focus background #24100F");
+        assert_eq!(BREAK, Color::Rgb(111, 208, 90), "break accent #6FD05A");
+        assert_eq!(BREAK_BG, Color::Rgb(19, 36, 15), "break background #13240F");
 
         // The rule that survives: a colour that carries meaning names its own
         // value, so no theme can repaint it.
