@@ -308,7 +308,27 @@ fn progress_gauge(view: &View) -> Gauge<'static> {
     let style = Style::new().fg(text_colour(view)).bg(phase_colour(view));
     gauge
         .gauge_style(style)
-        .label(Span::styled(format!("{}%", (ratio * 100.0).round()), style))
+        .label(Span::styled(flash_label(ratio), style))
+}
+
+/// The flash label, with one leading space.
+///
+/// `Gauge` styles ONE cell more than the label it draws. Its swapped-style run
+/// is `label_col..=label_col + label_width`, an inclusive range, and it then
+/// writes only `label_width` glyphs. The last cell of the run keeps a space.
+///
+/// While the flash is lit that cell shows. The filled bar is a run of blocks
+/// drawn in the DARK colour, and a space has no glyph, so the accent shows
+/// through and notches the bar. The notch then sits entirely to the right of
+/// the text, which is what reads as lopsided.
+///
+/// A leading space balances it. The label draws a pad cell of its own on the
+/// left, so the text keeps exactly one accent cell on each side.
+///
+/// The calm gauge needs no padding. There the filled blocks are drawn in the
+/// accent, so the extra cell matches the bar and cannot be seen.
+fn flash_label(ratio: f64) -> String {
+    format!(" {}%", (ratio * 100.0).round())
 }
 
 /// The colour that carries the phase. It is the text colour normally, and the
@@ -693,6 +713,61 @@ mod tests {
                 background_count(&calm, other),
                 0,
                 "{label}: the other phase background must never appear"
+            );
+        }
+    }
+
+    /// The lit flash must not notch the gauge bar off-centre.
+    ///
+    /// `Gauge` styles one cell more than it draws, and while the flash is lit
+    /// that cell shows as an accent notch in the dark bar. Before `flash_label`
+    /// padded the label, the notch sat wholly to the RIGHT of the text: at 44
+    /// columns the bar ran 19 blocks on the left against 18 on the right.
+    #[test]
+    fn the_lit_gauge_notch_stays_centred_on_its_label() {
+        const BLOCK: &str = "\u{2588}";
+
+        for width in [44u16, 43, 42, 41, 30] {
+            let mut view = focus_view();
+            view.progress = 1.0;
+            view.flashing = true;
+
+            let terminal = render(width, 16, &view);
+            let buffer = terminal.backend().buffer();
+
+            // The gauge row is the only row that carries a percent sign.
+            let row = (0..buffer.area.height)
+                .find(|y| (0..buffer.area.width).any(|x| buffer[(x, *y)].symbol() == "%"))
+                .expect("the gauge must draw at every width tested");
+
+            let cells: Vec<String> = (1..buffer.area.width - 1)
+                .map(|x| buffer[(x, row)].symbol().to_string())
+                .collect();
+
+            let first = cells
+                .iter()
+                .position(|s| s != BLOCK)
+                .expect("a full bar must still hold its label");
+            let last = cells
+                .iter()
+                .rposition(|s| s != BLOCK)
+                .expect("a full bar must still hold its label");
+
+            // The notch opens and closes on a pad, so the text inside it keeps
+            // one accent cell on each side.
+            assert_eq!(cells[first], " ", "{width}: the notch must open on a pad");
+            assert_eq!(cells[last], " ", "{width}: the notch must close on a pad");
+
+            let text: String = cells[first + 1..last].concat();
+            assert_eq!(text, "100%", "{width}: the notch holds {cells:?}");
+
+            // The runs of blocks either side match, give or take the one cell
+            // that integer centring cannot split.
+            let left = first;
+            let right = cells.len() - 1 - last;
+            assert!(
+                left.abs_diff(right) <= 1,
+                "{width}: {left} blocks on the left against {right} on the right"
             );
         }
     }
