@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="pomotui - focus, time, flow" width="280">
+</p>
+
 # pomotui
 
 A small pomodoro timer for the terminal. It counts down a focus phase, then a
@@ -91,7 +95,7 @@ into a silent visual mark.
 ## Develop
 
 ```sh
-cargo test              # 65 tests
+cargo test              # 69 tests
 cargo clippy --all-targets
 cargo fmt --check
 ```
