@@ -302,16 +302,18 @@ fn progress_gauge(view: &View) -> Gauge<'static> {
         // punches a hole in the phase background. Naming it also gives the
         // inverted label a real colour to swap to, instead of the terminal
         // default.
-        return gauge.gauge_style(Style::new().fg(phase_colour(view)).bg(base_colour(view)));
+        return gauge
+            .gauge_style(Style::new().fg(phase_colour(view)).bg(base_colour(view)))
+            .label(Span::raw(gauge_label(ratio)));
     }
 
     let style = Style::new().fg(text_colour(view)).bg(phase_colour(view));
     gauge
         .gauge_style(style)
-        .label(Span::styled(flash_label(ratio), style))
+        .label(Span::styled(gauge_label(ratio), style))
 }
 
-/// The flash label, with one leading space.
+/// The gauge label, with one leading space. BOTH states use it.
 ///
 /// `Gauge` styles ONE cell more than the label it draws. Its swapped-style run
 /// is `label_col..=label_col + label_width`, an inclusive range, and it then
@@ -319,15 +321,18 @@ fn progress_gauge(view: &View) -> Gauge<'static> {
 ///
 /// While the flash is lit that cell shows. The filled bar is a run of blocks
 /// drawn in the DARK colour, and a space has no glyph, so the accent shows
-/// through and notches the bar. The notch then sits entirely to the right of
-/// the text, which is what reads as lopsided.
+/// through and notches the bar. Unpadded, the notch sits entirely to the right
+/// of the text and reads as lopsided. The leading space balances it, so the
+/// text keeps one accent cell on each side.
 ///
-/// A leading space balances it. The label draws a pad cell of its own on the
-/// left, so the text keeps exactly one accent cell on each side.
+/// The calm state uses the SAME label, and that is the point. `Gauge` centres
+/// the label, so padding only the lit frame moved the text by one column at
+/// every odd width, and the blink then jumped it ten times in one hold. The
+/// two frames have to agree on the label width or the label cannot hold still.
 ///
-/// The calm gauge needs no padding. There the filled blocks are drawn in the
-/// accent, so the extra cell matches the bar and cannot be seen.
-fn flash_label(ratio: f64) -> String {
+/// The pad costs the calm frame nothing. It takes the accent over the filled
+/// bar and the dark colour over the rest, so it cannot be seen either way.
+fn gauge_label(ratio: f64) -> String {
     format!(" {}%", (ratio * 100.0).round())
 }
 
@@ -714,6 +719,46 @@ mod tests {
                 0,
                 "{label}: the other phase background must never appear"
             );
+        }
+    }
+
+    /// The columns that the gauge percentage occupies.
+    fn label_columns(terminal: &Terminal<TestBackend>) -> Vec<u16> {
+        let buffer = terminal.backend().buffer();
+        let row = (0..buffer.area.height)
+            .find(|y| (0..buffer.area.width).any(|x| buffer[(x, *y)].symbol() == "%"))
+            .expect("the gauge must draw at every width tested");
+        (0..buffer.area.width)
+            .filter(|x| {
+                buffer[(*x, row)]
+                    .symbol()
+                    .chars()
+                    .next()
+                    .is_some_and(|mark| mark.is_ascii_digit() || mark == '%')
+            })
+            .collect()
+    }
+
+    /// The label may not move between the two blink frames.
+    ///
+    /// `Gauge` centres its label, so the two frames have to agree on the label
+    /// width. When only the lit frame carried the pad, the text shifted by one
+    /// column at every ODD width and the blink jumped it ten times in one hold.
+    ///
+    /// Only ratio 1.0 is worth testing, because a phase can only flash once it
+    /// has completed.
+    #[test]
+    fn the_gauge_label_holds_its_columns_across_the_blink() {
+        for width in [44u16, 43, 42, 41, 40, 39, 38, 37, 31, 30] {
+            let mut view = focus_view();
+            view.progress = 1.0;
+
+            let calm = label_columns(&render(width, 16, &view));
+            view.flashing = true;
+            let lit = label_columns(&render(width, 16, &view));
+
+            assert!(!calm.is_empty(), "{width}: the label must draw");
+            assert_eq!(calm, lit, "{width}: the label moved when the flash lit");
         }
     }
 
