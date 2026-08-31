@@ -11,18 +11,31 @@ use ratatui::widgets::{Block, Gauge};
 
 use crate::digits;
 
-/// Focus red, pinned to an explicit value.
+/// The palette. Each phase owns an accent and a background.
 ///
-/// `Color::Red` is ANSI index 1, and the terminal THEME decides what that is.
-/// Catppuccin Mocha, the theme in use on this machine, paints index 1 as
-/// #fe428a: blue at 138 against green at 66, which reads as hot pink. An
-/// indexed colour is a request the theme may reinterpret, so a colour that
-/// carries meaning has to name its own value.
-const FOCUS: Color = Color::Rgb(224, 49, 49);
+/// Every colour that carries meaning names its own value. An indexed colour is
+/// only a request, and the terminal THEME decides what it looks like:
+/// `Color::Red` is ANSI index 1, and Catppuccin Mocha paints it #fe428a. So a
+/// phase colour can never be indexed, or the theme repaints the meaning.
+///
+/// Focus accent, #FF4696.
+const FOCUS: Color = Color::Rgb(255, 70, 150);
+/// Focus background, #1E1033.
+const FOCUS_BG: Color = Color::Rgb(30, 16, 51);
+/// Break accent, #B6FF2E.
+const BREAK: Color = Color::Rgb(182, 255, 46);
+/// Break background, #23262F.
+const BREAK_BG: Color = Color::Rgb(35, 38, 47);
 
-/// Break green. This one stays theme-defined on purpose, because the theme
-/// green already reads as green.
-const BREAK: Color = Color::Green;
+/// Quiet chrome: the border, the help row, and the debug row.
+///
+/// These stay indexed on purpose, because they carry no meaning and may follow
+/// the theme. They may NOT be `Color::Reset`. The pane now paints its own dark
+/// background, and `Reset` is the terminal's default foreground, which is dark
+/// on a light colour scheme. That would leave the chrome invisible.
+const QUIET: Color = Color::Gray;
+/// The dimmest chrome, for the debug row only.
+const QUIET_DIM: Color = Color::DarkGray;
 
 /// The border title.
 const TITLE: &str = " pomotui ";
@@ -108,6 +121,16 @@ fn take_row(spare: &mut u16) -> bool {
 
 pub fn draw(frame: &mut Frame, view: &View) {
     let area = frame.area();
+
+    // The phase background goes down FIRST, so the pane carries the palette
+    // instead of whatever the terminal happens to use.
+    //
+    // First, and not last, because the calm `Gauge` inverts its own label and
+    // sets a background to do it. A fill painted last would erase that
+    // inversion and leave the percentage unreadable. The lit flash below wants
+    // the opposite order, for the reason given there.
+    frame.render_widget(Block::new().style(Style::new().bg(base_colour(view))), area);
+
     draw_content(frame, area, view);
 
     // The lit flash paints the background LAST, over every widget already
@@ -162,7 +185,7 @@ fn draw_content(frame: &mut Frame, area: Rect, view: &View) {
             && fits_width(text, inner.width)
         {
             frame.render_widget(
-                Line::from(Span::styled(text, quiet_style(view, Color::DarkGray))).centered(),
+                Line::from(Span::styled(text, quiet_style(view, QUIET_DIM))).centered(),
                 band(inner, top, 1),
             );
         }
@@ -173,7 +196,7 @@ fn draw_content(frame: &mut Frame, area: Rect, view: &View) {
         let help = help_text(view);
         if fits_width(help, inner.width) {
             frame.render_widget(
-                Line::from(Span::styled(help, quiet_style(view, Color::Reset))).centered(),
+                Line::from(Span::styled(help, quiet_style(view, QUIET))).centered(),
                 band(inner, top, 1),
             );
         }
@@ -215,13 +238,17 @@ fn middle_row(within: Rect) -> Rect {
 }
 
 /// The border takes the text colour, so it stays readable on the lit flash.
+///
+/// The calm border names `QUIET` and not `Style::new()`. An unstyled border
+/// keeps the terminal's default foreground, and the pane now paints a dark
+/// background under it, so on a light colour scheme the border would vanish.
 fn border_style(view: &View) -> Style {
     if view.flashing {
         Style::new()
             .fg(text_colour(view))
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::new()
+        Style::new().fg(QUIET)
     }
 }
 
@@ -257,7 +284,13 @@ fn progress_gauge(view: &View) -> Gauge<'static> {
 
     if !view.flashing {
         // Calm: let the gauge invert its own label, which is the usual look.
-        return gauge.gauge_style(Style::new().fg(phase_colour(view)));
+        //
+        // The background still has to be NAMED. The gauge sets one on every
+        // cell it fills and its default is `Color::Reset`, so leaving it out
+        // punches a hole in the phase background. Naming it also gives the
+        // inverted label a real colour to swap to, instead of the terminal
+        // default.
+        return gauge.gauge_style(Style::new().fg(phase_colour(view)).bg(base_colour(view)));
     }
 
     let style = Style::new().fg(text_colour(view)).bg(phase_colour(view));
@@ -272,20 +305,28 @@ fn phase_colour(view: &View) -> Color {
     if view.is_break { BREAK } else { FOCUS }
 }
 
-/// The text colour. The lit flash fills the background with the phase colour,
-/// so the text turns black to stay readable.
+/// The background of the phase. It fills the pane while the app is calm, and it
+/// becomes the text colour while the flash is lit. So the two colours of a
+/// phase simply swap roles, and the flash needs no third colour.
+fn base_colour(view: &View) -> Color {
+    if view.is_break { BREAK_BG } else { FOCUS_BG }
+}
+
+/// The text colour. The lit flash fills the background with the accent, so the
+/// text takes the dark phase background to stay readable.
 fn text_colour(view: &View) -> Color {
     if view.flashing {
-        Color::Black
+        base_colour(view)
     } else {
         phase_colour(view)
     }
 }
 
-/// A quiet line. It turns black while the flash fills the background.
+/// A quiet line. It takes the dark phase background while the flash fills the
+/// pane with the accent.
 fn quiet_style(view: &View, calm: Color) -> Style {
     if view.flashing {
-        Style::new().fg(Color::Black)
+        Style::new().fg(base_colour(view))
     } else {
         Style::new().fg(calm)
     }
@@ -561,6 +602,89 @@ mod tests {
         assert!(!running.contains("PAUSED"), "a running view is not paused");
     }
 
+    /// The pane paints its own background at all times, so the app carries its
+    /// palette instead of inheriting whatever the terminal uses. The flash then
+    /// swaps that background for the accent, which the test below covers.
+    /// The first cell that draws a clock glyph pixel. The rows above the clock
+    /// hold the border and the label, so no earlier cell uses this symbol.
+    fn glyph_cell(terminal: &Terminal<TestBackend>) -> ratatui::buffer::Cell {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "\u{2588}")
+            .expect("the large clock must draw at this size")
+            .clone()
+    }
+
+    /// One place that pins where each colour goes. The palette test pins the
+    /// four values; this pins their roles, for both phases and both states.
+    #[test]
+    fn the_palette_reaches_the_right_parts_of_the_screen() {
+        for (is_break, label, accent, base) in [
+            (false, "FOCUS", FOCUS, FOCUS_BG),
+            (true, "BREAK", BREAK, BREAK_BG),
+        ] {
+            let mut view = focus_view();
+            view.is_break = is_break;
+            view.phase_label = label;
+
+            // Calm: the accent draws on the dark phase background.
+            let calm = render(44, 16, &view);
+            let glyph = glyph_cell(&calm);
+            assert_eq!(glyph.fg, accent, "{label}: calm clock");
+            assert_eq!(glyph.bg, base, "{label}: calm clock background");
+            assert_eq!(border_cell(&calm).fg, QUIET, "{label}: calm border");
+
+            // Lit: the two colours of the phase swap round.
+            view.flashing = true;
+            let lit = render(44, 16, &view);
+            let glyph = glyph_cell(&lit);
+            assert_eq!(glyph.fg, base, "{label}: lit clock");
+            assert_eq!(glyph.bg, accent, "{label}: lit clock background");
+            assert_eq!(border_cell(&lit).fg, base, "{label}: lit border");
+        }
+    }
+
+    #[test]
+    fn each_phase_paints_its_own_background_while_calm() {
+        let cells = 44 * 16;
+
+        for (is_break, label, base, other) in [
+            (false, "FOCUS", FOCUS_BG, BREAK_BG),
+            (true, "BREAK", BREAK_BG, FOCUS_BG),
+        ] {
+            let mut view = focus_view();
+            view.is_break = is_break;
+            view.phase_label = label;
+            let calm = render(44, 16, &view);
+
+            // Not one cell keeps the terminal default, so nothing shows through.
+            assert!(
+                calm.backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .all(|cell| cell.bg != Color::Reset),
+                "{label}: every cell must carry a real background"
+            );
+
+            // The phase background covers nearly all of it. The calm gauge
+            // legitimately inverts its own label across a few cells.
+            let painted = background_count(&calm, base);
+            assert!(
+                painted > cells * 3 / 4,
+                "{label}: the phase background must fill the pane, got {painted} of {cells}"
+            );
+            assert_eq!(
+                background_count(&calm, other),
+                0,
+                "{label}: the other phase background must never appear"
+            );
+        }
+    }
+
     #[test]
     fn the_lit_flash_fills_the_whole_background() {
         let cells = 44 * 16;
@@ -596,17 +720,19 @@ mod tests {
         view.flashing = true;
         let lit = render(44, 16, &view);
 
-        // The text turns black so it stays readable on the fill.
-        assert_eq!(label_cell(&lit, "F").fg, Color::Black, "label");
+        // The text takes the dark phase background, so it stays readable on the
+        // accent fill. It was black before the palette gave each phase its own
+        // background colour to invert to.
+        assert_eq!(label_cell(&lit, "F").fg, FOCUS_BG, "label");
         assert!(label_cell(&lit, "F").modifier.contains(Modifier::BOLD));
-        assert_eq!(border_cell(&lit).fg, Color::Black, "border");
+        assert_eq!(border_cell(&lit).fg, FOCUS_BG, "border");
         assert_eq!(label_cell(&calm, "F").fg, FOCUS, "calm label");
 
         // Nothing is reversed any more. That is what distorted the glyphs.
         assert_eq!(reversed_cells(&lit), 0, "the flash must not reverse a cell");
         assert_eq!(reversed_cells(&calm), 0);
 
-        // A break flashes green, so the colour names the phase that started.
+        // A break flashes its own accent, so the fill names the phase that ended.
         view.is_break = true;
         view.phase_label = "BREAK";
         assert_eq!(background_count(&render(44, 16, &view), BREAK), cells);
@@ -633,7 +759,7 @@ mod tests {
     }
 
     #[test]
-    fn the_label_is_red_for_focus_and_green_for_a_break() {
+    fn the_label_takes_the_accent_of_its_phase() {
         let focus = label_cell(&render(44, 16, &focus_view()), "F");
         assert_eq!(focus.fg, FOCUS);
 
@@ -645,24 +771,39 @@ mod tests {
     }
 
     #[test]
-    fn the_focus_colour_is_a_real_red_that_no_theme_can_repaint() {
-        // Color::Red is ANSI index 1. Catppuccin Mocha paints it #fe428a, which
-        // reads as pink, so an indexed colour cannot carry this meaning.
-        assert_ne!(FOCUS, Color::Red, "an indexed colour follows the theme");
+    fn the_palette_pins_its_values_and_no_theme_can_repaint_them() {
+        // The exact palette. These four values are the design, so a test that
+        // only described their hue would let a wrong value through. An earlier
+        // version of this test asserted that FOCUS did NOT read as pink. The
+        // palette chose pink on purpose, so that rule is gone and the values
+        // are pinned instead.
+        assert_eq!(FOCUS, Color::Rgb(255, 70, 150), "focus accent #FF4696");
+        assert_eq!(FOCUS_BG, Color::Rgb(30, 16, 51), "focus background #1E1033");
+        assert_eq!(BREAK, Color::Rgb(182, 255, 46), "break accent #B6FF2E");
+        assert_eq!(BREAK_BG, Color::Rgb(35, 38, 47), "break background #23262F");
 
-        let Color::Rgb(r, g, b) = FOCUS else {
-            panic!("the focus colour must name its own value, got {FOCUS:?}");
-        };
+        // The rule that survives: a colour that carries meaning names its own
+        // value, so no theme can repaint it.
+        for (name, colour) in [
+            ("FOCUS", FOCUS),
+            ("FOCUS_BG", FOCUS_BG),
+            ("BREAK", BREAK),
+            ("BREAK_BG", BREAK_BG),
+        ] {
+            assert!(
+                matches!(colour, Color::Rgb(..)),
+                "{name} must name its own value, got {colour:?}"
+            );
+        }
 
-        // Red has to dominate.
-        assert!(r > 150, "too dark to read as red, r={r}");
-        assert!(
-            u16::from(r) > u16::from(g) * 2,
-            "red must dominate green, r={r} g={g}"
-        );
-        // Blue leading green is exactly what makes a colour look pink.
-        assert!(b <= g, "blue above green reads as pink, g={g} b={b}");
-        assert!(b < 120, "too much blue reads as pink, b={b}");
+        // The chrome may follow the theme, but it may never be Reset: the pane
+        // paints a dark background, and Reset is dark on a light scheme.
+        assert_ne!(QUIET, Color::Reset, "invisible on a light colour scheme");
+        assert_ne!(QUIET_DIM, Color::Reset, "invisible on a light scheme");
+
+        // Each phase must be able to tell its two colours apart.
+        assert_ne!(FOCUS, FOCUS_BG);
+        assert_ne!(BREAK, BREAK_BG);
     }
 
     #[test]
