@@ -13,8 +13,8 @@ window.
 ## Demo
 
 The clock rests at 00:00 for five seconds and blinks, then the next phase
-starts. This recording runs in `--debug` mode, so the flags count seconds and
-the whole cycle is quick to watch.
+starts. This recording runs in `--debug` mode, so the flags count seconds
+instead of minutes.
 
 ![pomotui counting down and flashing at the phase change](assets/demo.gif)
 
