@@ -1,0 +1,174 @@
+name: Release
+
+# A release that GITHUB_TOKEN creates fires no event. A separate workflow on
+# "release: published" would never start. So the build lives here, behind a gate.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Open the release PR, or tag the release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      # Pass the token and nothing else. A release-type input here would switch
+      # the action to inline mode and make it ignore both config files.
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: release-please
+    # release_created is the string 'true' or 'false'. Compare it. Do not
+    # test it for truth, because every non-empty string is true.
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-26
+            macho_arch: arm64
+            rustflags: ""
+          # Intel macOS is a larger runner, and larger runners always cost
+          # money. Cross-compile from the free arm64 runner instead.
+          - target: x86_64-apple-darwin
+            runner: macos-26
+            macho_arch: x86_64
+            rustflags: ""
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            rustflags: ""
+          # Build arm64 on an arm64 host. A cross link hands aarch64 objects
+          # to an x86_64 linker.
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            rustflags: ""
+          # musl links static by default. Windows does not, so ask for it.
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            rustflags: "-C target-feature=+crt-static"
+    steps:
+      # Build the tag, not the branch. A commit can land between the tag and
+      # this job, and then the binaries would not match the release.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      # The targets input replaces a separate "rustup target add" step.
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      # RUSTFLAGS stays on this step. At workflow level it would leak onto
+      # every other target in the matrix.
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+
+      - name: Check the macOS architecture
+        if: runner.os == 'macOS'
+        run: |
+          got=$(lipo -archs "target/${{ matrix.target }}/release/pomotui")
+          echo "lipo reports: $got"
+          test "$got" = "${{ matrix.macho_arch }}"
+
+      - name: Check the Linux binary is static
+        if: runner.os == 'Linux'
+        run: |
+          file "target/${{ matrix.target }}/release/pomotui"
+          file "target/${{ matrix.target }}/release/pomotui" \
+            | grep -qE 'static-pie linked|statically linked'
+
+      # Stage the two files first, so the archive stays flat and carries the
+      # licence. A binary on its own grants the reader no rights.
+      - name: Package the tarball
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist stage
+          cp "target/${{ matrix.target }}/release/pomotui" LICENSE stage/
+          tar -czf "dist/pomotui-${{ needs.release-please.outputs.version }}-${{ matrix.target }}.tar.gz" \
+            -C stage pomotui LICENSE
+
+      - name: Package the zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = "target/${{ matrix.target }}/release/pomotui.exe"
+          if (-not (Test-Path $exe)) { throw "no binary at $exe" }
+          New-Item -ItemType Directory -Force -Path dist, stage | Out-Null
+          Copy-Item -Path $exe, "LICENSE" -Destination stage
+          Compress-Archive -Path stage/* -DestinationPath "dist/pomotui-${{ needs.release-please.outputs.version }}-${{ matrix.target }}.zip"
+
+      # One artefact name per target. Duplicate names are rejected.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pomotui-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Attach the binaries to the release
+    needs: [release-please, build]
+    # A failed build leg leaves the release live and empty. To recover, use
+    # "Re-run failed jobs". Do not use "Re-run all jobs". A full re-run starts
+    # release-please again, it finds the PR already tagged, it creates nothing,
+    # and this job skips once more.
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      # gh finds neither a token nor a repo on its own. This job does no
+      # checkout, so gh has no git remote to read the repo from. gh reads
+      # GH_REPO. It never reads GITHUB_REPOSITORY.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # merge-multiple puts every archive in one flat directory. Without it
+      # each artefact lands in a sub-directory of its own.
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: pomotui-*
+          merge-multiple: true
+
+      # Run from inside dist, so the file records bare names. Name the two
+      # extensions, and keep this one simple command. A pipeline expands the
+      # glob and creates SHA256SUMS in two children at the same time, so a
+      # bare * can catch the output file and hash it as empty.
+      - name: Write the checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz *.zip > SHA256SUMS
+
+      - name: Upload
+        working-directory: dist
+        run: |
+          ls -l
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" --clobber -- *
