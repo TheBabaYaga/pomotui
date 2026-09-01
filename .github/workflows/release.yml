@@ -106,12 +106,15 @@ jobs:
           file "target/${{ matrix.target }}/release/pomotui" \
             | grep -qE 'static-pie linked|statically linked'
 
+      # Stage the two files first, so the archive stays flat and carries the
+      # licence. A binary on its own grants the reader no rights.
       - name: Package the tarball
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist
+          mkdir -p dist stage
+          cp "target/${{ matrix.target }}/release/pomotui" LICENSE stage/
           tar -czf "dist/pomotui-${{ needs.release-please.outputs.version }}-${{ matrix.target }}.tar.gz" \
-            -C "target/${{ matrix.target }}/release" pomotui
+            -C stage pomotui LICENSE
 
       - name: Package the zip
         if: runner.os == 'Windows'
@@ -119,8 +122,9 @@ jobs:
         run: |
           $exe = "target/${{ matrix.target }}/release/pomotui.exe"
           if (-not (Test-Path $exe)) { throw "no binary at $exe" }
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path $exe -DestinationPath "dist/pomotui-${{ needs.release-please.outputs.version }}-${{ matrix.target }}.zip"
+          New-Item -ItemType Directory -Force -Path dist, stage | Out-Null
+          Copy-Item -Path $exe, "LICENSE" -Destination stage
+          Compress-Archive -Path stage/* -DestinationPath "dist/pomotui-${{ needs.release-please.outputs.version }}-${{ matrix.target }}.zip"
 
       # One artefact name per target. Duplicate names are rejected.
       - uses: actions/upload-artifact@v7

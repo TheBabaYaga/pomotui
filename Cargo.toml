@@ -2,6 +2,7 @@
 name = "pomotui"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 # The measured floor, not the toolchain in use. ratatui 0.30 declares 1.88.0,
 # and the let-chain in main.rs needs 1.88. Edition 2024 alone needs only 1.85.
 rust-version = "1.88"

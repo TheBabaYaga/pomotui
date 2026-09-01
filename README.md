@@ -123,3 +123,8 @@ flags, and the debug mode.
 
 Out of scope on purpose: a long break, a cycle counter, task labels, a task
 list, saved statistics, and a config file.
+
+## Licence
+
+MIT. The full text is in [LICENSE](LICENSE), and every release archive carries
+a copy.
