@@ -9,3 +9,10 @@ rust-version = "1.88"
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 ratatui = "0.30"
+
+# Smaller binaries for the release archives. Thin LTO and one codegen unit
+# trade build time for size, and strip drops the symbol table.
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
